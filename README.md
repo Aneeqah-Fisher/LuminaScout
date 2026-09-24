@@ -138,9 +138,7 @@ The demonstration covers:
 •	Solar information
 •	Golden hour and blue hour
 •	Saved locations
-•	Other implemented application features
-•	Online authentication/API/database data where applicable
-Video: 
+Video: https://youtu.be/TJxMK99YYz4
 ________________________________________
 Screenshots
 Home Screen
