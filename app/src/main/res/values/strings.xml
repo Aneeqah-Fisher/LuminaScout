@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">LuminaScout</string>
+    <string name="app_name" translatable="false">LuminaScout</string>
     <string name="default_web_client_id">828070315382-r0aler10nibad8r9hdk72jsun6r824dl.apps.googleusercontent.com</string>
 </resources>
