@@ -24,8 +24,9 @@ import androidx.compose.ui.unit.sp
 fun LoginScreen(
     onLoginClick: (String, String) -> Unit,
     onNavigateToRegister: () -> Unit,
+    onGoogleSignInClick: () -> Unit = {},
     onForgotPasswordClick: () -> Unit = {}
-) {
+){
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
@@ -148,7 +149,7 @@ fun LoginScreen(
 
         // Sign in with Google Button
         OutlinedButton(
-            onClick = { /* Deferred to Part 3 */ },
+            onClick = onGoogleSignInClick,
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier
                 .fillMaxWidth()
@@ -158,16 +159,6 @@ fun LoginScreen(
                 text = "Sign in with Google",
                 fontSize = 16.sp,
                 color = MaterialTheme.colorScheme.onBackground
-            )
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Forgot Password Link
-        TextButton(onClick = onForgotPasswordClick) {
-            Text(
-                text = "Forgot password?",
-                color = MaterialTheme.colorScheme.primary
             )
         }
 

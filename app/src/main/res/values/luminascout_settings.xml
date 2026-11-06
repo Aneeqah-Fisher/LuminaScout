@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ls_preferences">PREFERENCES</string>
+    <string name="ls_account">ACCOUNT</string>
+    <string name="ls_language">Language</string>
+    <string name="ls_choose_language">Choose a language</string>
+    <string name="ls_cancel">Cancel</string>
+    <string name="ls_notifications">Notifications</string>
+    <string name="ls_units">Units</string>
+    <string name="ls_dark_mode">Dark Mode</string>
+    <string name="ls_subscription">Subscription &amp; Billing</string>
+    <string name="ls_saved_locations">Saved Locations</string>
+    <string name="ls_log_out">Log Out</string>
+    <string name="ls_edit_profile">Edit Profile</string>
+    <string name="ls_billing_message">Opening billing</string>
+    <string name="ls_user_account">User Account</string>
+</resources>

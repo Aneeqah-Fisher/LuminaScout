@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ls_preferences">IZINTO OZIKHETHAYO</string>
+    <string name="ls_account">IAKHAWUNTI</string>
+    <string name="ls_language">Ulwimi</string>
+    <string name="ls_choose_language">Khetha ulwimi</string>
+    <string name="ls_cancel">Rhoxisa</string>
+    <string name="ls_notifications">Izaziso</string>
+    <string name="ls_units">Iiyunithi</string>
+    <string name="ls_dark_mode">Imowudi emnyama</string>
+    <string name="ls_subscription">Umrhumo neentlawulo</string>
+    <string name="ls_saved_locations">Iindawo ezigciniweyo</string>
+    <string name="ls_log_out">Phuma</string>
+    <string name="ls_edit_profile">Hlela iprofayili</string>
+    <string name="ls_billing_message">Kuvulwa iintlawulo</string>
+    <string name="ls_user_account">Iakhawunti yomsebenzisi</string>
+</resources>

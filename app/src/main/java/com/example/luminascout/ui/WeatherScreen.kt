@@ -1,5 +1,18 @@
 package com.example.luminascout.ui
 
+import com.example.luminascout.R
+import androidx.compose.ui.platform.LocalContext
+
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.example.luminascout.Data.LocationSearchApi
+import com.example.luminascout.Data.SearchedLocation
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -7,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Air
 import androidx.compose.material.icons.outlined.Cloud
@@ -19,6 +33,14 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,7 +61,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.example.luminascout.AppSettings
+import com.example.luminascout.GoldenHourReminderScheduler
 import com.example.luminascout.Data.RetrofitClient
+import androidx.compose.ui.res.stringResource
+
 
 // -------------------------------------------------------------
 // FORECAST DATA
@@ -48,6 +73,7 @@ import com.example.luminascout.Data.RetrofitClient
 private data class ForecastData(
     val day: String,
     val maxTemperature: Double,
+    val minTemperature: Double?,
     val weatherCode: Int
 )
 
@@ -65,9 +91,108 @@ fun WeatherScreen() {
     var temperature by remember { mutableStateOf<Double?>(null) }
     var windSpeed by remember { mutableStateOf<Double?>(null) }
     var weatherCode by remember { mutableStateOf<Int?>(null) }
-
+    val context = androidx.compose.ui.platform.LocalContext.current
     var cloudCover by remember { mutableStateOf<Double?>(null) }
     var rainChance by remember { mutableStateOf<Double?>(null) }
+
+    // Location is selected independently of the weather data.
+    var selectedLat by remember { mutableStateOf(-33.9249) }
+    var selectedLon by remember { mutableStateOf(18.4241) }
+    var locationLabel by remember { mutableStateOf("Cape Town (default)") }
+    var usingPhoneLocation by remember { mutableStateOf(false) }
+    var locationError by remember { mutableStateOf<String?>(null) }
+    var searchText by remember { mutableStateOf("") }
+    var searchResults by remember { mutableStateOf<List<SearchedLocation>>(emptyList()) }
+    var searching by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val fusedLocation = remember(context) {
+        LocationServices.getFusedLocationProviderClient(context)
+    }
+
+    fun usePhoneLocation() {
+        if (ContextCompat.checkSelfPermission(
+                context, Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(
+                context, Manifest.permission.ACCESS_COARSE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            locationError = "Location permission is needed to use your position."
+            return
+        }
+        locationError = null
+        try {
+            fusedLocation.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, null)
+                .addOnSuccessListener { location ->
+                    if (location != null) {
+                        selectedLat = location.latitude
+                        selectedLon = location.longitude
+                        locationLabel = "My current location"
+                        usingPhoneLocation = true
+                        searchText = ""
+                        searchResults = emptyList()
+                    } else {
+                        locationError = "Couldn't get GPS location. Enable Location on your phone and try again."
+                    }
+                }
+                .addOnFailureListener {
+                    locationError = "Couldn't get GPS location. Please try again."
+                }
+        } catch (_: SecurityException) {
+            locationError = "Location permission is required."
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        if (permissions.values.any { it }) usePhoneLocation()
+        else locationError = "Location permission denied. You can still search for an area."
+    }
+
+    fun requestPhoneLocation() {
+        if (ContextCompat.checkSelfPermission(
+                context, Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(
+                context, Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        ) usePhoneLocation()
+        else permissionLauncher.launch(arrayOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ))
+    }
+
+    // Automatically try GPS when the Weather tab first opens.
+    LaunchedEffect(Unit) { requestPhoneLocation() }
+
+    // Sunrise and sunset reminders always use Cape Town, regardless of
+    // the location being viewed or searched on this Weather screen.
+    // The scheduler fetches Cape Town sun times separately.
+    LaunchedEffect(Unit) {
+        GoldenHourReminderScheduler.scheduleCapeTown(context)
+    }
+
+    LaunchedEffect(searchText) {
+        searchResults = emptyList()
+        if (searchText.trim().length < 2) {
+            searching = false
+            return@LaunchedEffect
+        }
+        delay(350) // Avoid making a network request for every keystroke.
+        searching = true
+        try {
+            searchResults = LocationSearchApi.service
+                .searchLocations(searchText.trim()).results.orEmpty()
+            locationError = null
+        } catch (_: Exception) {
+            locationError = "Couldn't search locations. Check your internet connection."
+        } finally {
+            searching = false
+        }
+    }
+
 
     // ---------------------------------------------------------
     // SOLAR DATA
@@ -94,12 +219,26 @@ fun WeatherScreen() {
     // GET LIVE API DATA
     // ---------------------------------------------------------
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(selectedLat, selectedLon) {
+
+        // Clear old location's values while the new forecast loads.
+        temperature = null
+        windSpeed = null
+        cloudCover = null
+        rainChance = null
+        sunriseTime = "Loading..."
+        goldenHourTime = "Loading..."
+        sunsetTime = "Loading..."
+        blueHourTime = "Loading..."
+        forecastDays = emptyList()
+        apiError = false
 
         try {
 
             val response =
-                RetrofitClient.apiService.getCurrentWeather()
+                RetrofitClient.apiService.getCurrentWeather(
+                    lat = selectedLat, lon = selectedLon
+                )
 
             // -------------------------------------------------
             // CURRENT WEATHER
@@ -146,7 +285,6 @@ fun WeatherScreen() {
                 sunriseRaw != null &&
                 sunsetRaw != null
             ) {
-
                 sunriseTime =
                     formatSolarTime(sunriseRaw)
 
@@ -189,6 +327,9 @@ fun WeatherScreen() {
             val forecastMaxTemperatures =
                 daily?.temperature_2m_max
 
+            val forecastMinTemperatures =
+                daily?.temperature_2m_min
+
             if (
                 forecastDates != null &&
                 forecastWeatherCodes != null &&
@@ -224,6 +365,7 @@ fun WeatherScreen() {
                                     ),
                                     maxTemperature =
                                         maxTemperature,
+                                    minTemperature = forecastMinTemperatures?.getOrNull(index),
                                     weatherCode = code
                                 )
 
@@ -332,7 +474,7 @@ fun WeatherScreen() {
             Column {
 
                 Text(
-                    text = "Weather & Light",
+                    text = stringResource(R.string.ls_weather_light),
                     color = Color.White,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold
@@ -362,7 +504,7 @@ fun WeatherScreen() {
 
                     Text(
                         text =
-                            "Signal Hill, Cape Town",
+                            locationLabel,
                         color = textMuted,
                         fontSize = 12.sp
                     )
@@ -377,9 +519,9 @@ fun WeatherScreen() {
                 Text(
                     text =
                         if (apiError) {
-                            "API Error"
+                            stringResource(R.string.ls_api_error)
                         } else {
-                            "Updated"
+                            stringResource(R.string.ls_updated)
                         },
                     color = textMuted,
                     fontSize = 10.sp
@@ -388,9 +530,9 @@ fun WeatherScreen() {
                 Text(
                     text =
                         if (apiError) {
-                            "Check connection"
+                            stringResource(R.string.ls_check_connection)
                         } else {
-                            "Live data"
+                            stringResource(R.string.ls_live_data)
                         },
                     color = Color.White,
                     fontSize = 11.sp,
@@ -400,9 +542,64 @@ fun WeatherScreen() {
             }
         }
 
-        Spacer(
-            modifier = Modifier.height(16.dp)
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Location selector: search or use the phone's GPS.
+        OutlinedTextField(
+            value = searchText,
+            onValueChange = { searchText = it },
+            label = { Text(stringResource(R.string.ls_search_city_or_area)) },
+            placeholder = { Text("e.g. Stellenbosch, Durban") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color.White,
+                unfocusedTextColor = Color.White,
+                focusedBorderColor = accentOrange,
+                focusedLabelColor = accentOrange,
+                unfocusedLabelColor = textMuted,
+                unfocusedBorderColor = textMuted
+            )
         )
+        TextButton(onClick = { requestPhoneLocation() }) {
+            Icon(Icons.Outlined.Place, contentDescription = null, tint = accentOrange)
+            Spacer(Modifier.width(6.dp))
+            Text(stringResource(R.string.ls_use_my_current_location), color = accentOrange)
+        }
+        if (searching) CircularProgressIndicator(
+            modifier = Modifier.size(22.dp), color = accentOrange
+        )
+        if (searchResults.isNotEmpty()) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = cardBackground),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column {
+                    searchResults.forEach { place ->
+                        Text(
+                            text = listOfNotNull(place.name, place.admin1, place.country)
+                                .distinct().joinToString(", "),
+                            color = Color.White,
+                            modifier = Modifier.fillMaxWidth()
+                                .clickable {
+                                    selectedLat = place.latitude
+                                    selectedLon = place.longitude
+                                    locationLabel = listOfNotNull(place.name, place.country)
+                                        .joinToString(", ")
+                                    usingPhoneLocation = false
+                                    searchText = ""
+                                    searchResults = emptyList()
+                                }
+                                .padding(12.dp)
+                        )
+                        HorizontalDivider(color = textMuted.copy(alpha = 0.2f))
+                    }
+                }
+            }
+        }
+        locationError?.let { Text(it, color = Color(0xFFFFB74D), fontSize = 12.sp) }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         // -----------------------------------------------------
         // PHOTOGRAPHY CONDITIONS SCORE
@@ -535,13 +732,13 @@ fun WeatherScreen() {
                             text = when {
 
                                 photographyScore >= 85 ->
-                                    "Excellent Conditions"
+                                    stringResource(R.string.ls_excellent_conditions)
 
                                 photographyScore >= 70 ->
-                                    "Good Conditions"
+                                    stringResource(R.string.ls_good_conditions)
 
                                 else ->
-                                    "Fair Conditions"
+                                    stringResource(R.string.ls_fair_conditions)
                             },
                             color = accentGreen,
                             fontSize = 14.sp,
@@ -599,7 +796,7 @@ fun WeatherScreen() {
             ) {
 
                 Text(
-                    text = "LIGHT TIMELINE",
+                    text = stringResource(R.string.ls_light_timeline),
                     color = textMuted,
                     fontSize = 11.sp,
                     fontWeight =
@@ -701,28 +898,28 @@ fun WeatherScreen() {
                 ) {
 
                     LightTimelineItem(
-                        label = "Sunrise",
+                        label =stringResource(R.string.ls_sunrise),
                         time = sunriseTime,
                         highlightColor =
                             accentBlue
                     )
 
                     LightTimelineItem(
-                        label = "Golden Hr",
+                        label = stringResource(R.string.ls_golden_hr),
                         time = goldenHourTime,
                         highlightColor =
                             accentOrange
                     )
 
                     LightTimelineItem(
-                        label = "Sunset",
+                        label = stringResource(R.string.ls_sunset),
                         time = sunsetTime,
                         highlightColor =
                             Color(0xFFFF5722)
                     )
 
                     LightTimelineItem(
-                        label = "Blue Hr",
+                        label = stringResource(R.string.ls_blue_hr),
                         time = blueHourTime,
                         highlightColor =
                             Color(0xFF7C4DFF)
@@ -754,7 +951,7 @@ fun WeatherScreen() {
                 iconTint =
                     accentOrange,
                 title =
-                    "Temperature",
+                    stringResource(R.string.ls_temperature),
                 value =
                     if (temperature != null) {
 
@@ -847,7 +1044,7 @@ fun WeatherScreen() {
             iconTint =
                 textMuted,
             title =
-                "Cloud Cover",
+                stringResource(R.string.ls_cloud_cover),
             value =
                 if (cloudCover != null) {
 
@@ -889,7 +1086,7 @@ fun WeatherScreen() {
             iconTint =
                 accentBlue,
             title =
-                "Rain Chance",
+                stringResource(R.string.ls_rain_chance),
             value =
                 if (rainChance != null) {
 
@@ -920,88 +1117,69 @@ fun WeatherScreen() {
         )
 
         // -----------------------------------------------------
-        // 5-DAY FORECAST
+        // 5-DAY FORECAST — swipeable, individual cards
         // -----------------------------------------------------
 
         Card(
-            shape =
-                RoundedCornerShape(16.dp),
-            colors =
-                CardDefaults.cardColors(
-                    containerColor =
-                        cardBackground
-                ),
-            modifier =
-                Modifier.fillMaxWidth()
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = cardBackground),
+            modifier = Modifier.fillMaxWidth()
         ) {
+            Column(modifier = Modifier.padding(vertical = 18.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = stringResource(R.string.ls_weather_outlook),
+                            color = textMuted,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = stringResource(R.string.ls_next_5_days),
+                            color = Color.White,
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Text(text = "Swipe →", color = accentOrange, fontSize = 12.sp)
+                }
 
-            Column(
-                modifier =
-                    Modifier.padding(16.dp)
-            ) {
-
-                Text(
-                    text =
-                        "5-DAY FORECAST",
-                    color =
-                        textMuted,
-                    fontSize =
-                        11.sp,
-                    fontWeight =
-                        FontWeight.Bold
-                )
-
-                Spacer(
-                    modifier =
-                        Modifier.height(14.dp)
-                )
+                Spacer(modifier = Modifier.height(16.dp))
 
                 if (forecastDays.isEmpty()) {
-
                     Text(
-                        text =
-                            if (apiError) {
-                                "Forecast unavailable"
-                            } else {
-                                "Loading forecast..."
-                            },
-                        color =
-                            textMuted,
-                        fontSize =
-                            12.sp
+                        text = if (apiError) stringResource(R.string.ls_forecast_unavailable) else stringResource(R.string.ls_loading_forecast),
+                        color = textMuted,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(horizontal = 16.dp)
                     )
-
                 } else {
-
                     Row(
-                        modifier =
-                            Modifier.fillMaxWidth(),
-                        horizontalArrangement =
-                            Arrangement.SpaceBetween
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-
-                        forecastDays.forEach { forecast ->
-
+                        forecastDays.forEachIndexed { index, forecast ->
                             ForecastDayItem(
-                                day =
-                                    forecast.day,
-                                icon =
-                                    weatherIconForCode(
-                                        forecast.weatherCode
-                                    ),
-                                temp =
-                                    formatForecastTemperature(
-                                        forecast.maxTemperature,
-                                        temperatureUnit
-                                    ),
-                                isSunny =
-                                    isSunnyWeatherCode(
-                                        forecast.weatherCode
-                                    ),
-                                accentOrange =
-                                    accentOrange,
-                                textMuted =
-                                    textMuted
+                                day = forecast.day,
+                                icon = weatherIconForCode(forecast.weatherCode),
+                                temp = formatForecastTemperature(
+                                    forecast.maxTemperature, temperatureUnit
+                                ),
+                                lowTemp = forecast.minTemperature?.let {
+                                    formatForecastTemperature(it, temperatureUnit)
+                                },
+                                description = forecastDescription(forecast.weatherCode),
+                                isSunny = isSunnyWeatherCode(forecast.weatherCode),
+                                isToday = index == 0,
+                                accentOrange = accentOrange,
+                                textMuted = textMuted
                             )
                         }
                     }
@@ -1353,78 +1531,73 @@ private fun WeatherMetricCard(
 // FORECAST DAY ITEM
 // -------------------------------------------------------------
 
+private fun forecastDescription(code: Int): String = when (code) {
+    0, 1 -> "Sunny"
+    2 -> "Partly cloudy"
+    3 -> "Cloudy"
+    45, 48 -> "Foggy"
+    51, 53, 55, 56, 57 -> "Drizzle"
+    61, 63, 65, 66, 67, 80, 81, 82 -> "Rainy"
+    71, 73, 75, 77, 85, 86 -> "Snowy"
+    95, 96, 99 -> "Stormy"
+    else -> "Variable"
+}
+
 @Composable
 private fun ForecastDayItem(
     day: String,
     icon: ImageVector,
     temp: String,
+    lowTemp: String?,
+    description: String,
     isSunny: Boolean,
+    isToday: Boolean,
     accentOrange: Color,
     textMuted: Color
 ) {
+    val iconColor = if (isSunny) accentOrange else Color(0xFF79B8F8)
 
     Column(
-        horizontalAlignment =
-            Alignment.CenterHorizontally
+        modifier = Modifier
+            .width(132.dp)
+            .background(
+                if (isToday) Color(0xFF30303A) else Color(0xFF252D39),
+                RoundedCornerShape(18.dp)
+            )
+            .padding(horizontal = 12.dp, vertical = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-
         Text(
             text = day,
-            color = textMuted,
-            fontSize = 11.sp
+            color = if (isToday) accentOrange else Color.White,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold
         )
-
-        Spacer(
-            modifier =
-                Modifier.height(6.dp)
-        )
-
+        Spacer(modifier = Modifier.height(16.dp))
         Icon(
             imageVector = icon,
-            contentDescription = null,
-            tint =
-                if (isSunny) {
-                    accentOrange
-                } else {
-                    textMuted
-                },
-            modifier =
-                Modifier.size(20.dp)
+            contentDescription = description,
+            tint = iconColor,
+            modifier = Modifier.size(38.dp)
         )
-
-        Spacer(
-            modifier =
-                Modifier.height(6.dp)
-        )
-
+        Spacer(modifier = Modifier.height(14.dp))
         Text(
             text = temp,
             color = Color.White,
-            fontSize = 13.sp,
-            fontWeight =
-                FontWeight.Bold
+            fontSize = 23.sp,
+            fontWeight = FontWeight.Bold
         )
-
-        Spacer(
-            modifier =
-                Modifier.height(4.dp)
+        Text(
+            text = lowTemp?.let { "Low $it" } ?: "Low --",
+            color = textMuted,
+            fontSize = 11.sp
         )
-
-        Box(
-            modifier =
-                Modifier
-                    .width(20.dp)
-                    .height(3.dp)
-                    .clip(
-                        RoundedCornerShape(2.dp)
-                    )
-                    .background(
-                        if (isSunny) {
-                            accentOrange
-                        } else {
-                            Color.Transparent
-                        }
-                    )
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = description,
+            color = iconColor,
+            fontSize = 11.sp,
+            maxLines = 1
         )
     }
 }
