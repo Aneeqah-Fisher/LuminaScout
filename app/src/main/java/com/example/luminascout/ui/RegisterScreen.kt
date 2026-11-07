@@ -24,7 +24,8 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun RegisterScreen(
     onRegisterClick: (String, String, String) -> Unit,
-    onNavigateToLogin: () -> Unit
+    onNavigateToLogin: () -> Unit,
+    onGoogleSignUpClick: () -> Unit = {}
 ) {
     var fullName by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
@@ -195,9 +196,9 @@ fun RegisterScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Sign up with Google Button (Placeholder)
+        // Sign up with Google using the existing Firebase Google sign-in flow
         OutlinedButton(
-            onClick = { /* Google Sign-up deferred */ },
+            onClick = onGoogleSignUpClick,
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier
                 .fillMaxWidth()

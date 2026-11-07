@@ -1,7 +1,9 @@
 package com.example.luminascout.ui
 
 import android.content.Context
-import android.widget.Toast
+import android.content.res.Configuration
+import java.util.Locale
+import com.example.luminascout.R
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -9,23 +11,18 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.outlined.DarkMode
-import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Notifications
-import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Thermostat
-import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -34,7 +31,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,16 +41,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.luminascout.AppSettings
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.platform.LocalConfiguration
 
 @Composable
 fun SettingsScreen(
     userName: String,
-    userEmail: String = "${userName.lowercase().replace(" ", "")}@luminascout.app",
+    userEmail: String = "",
     membershipStatus: String = "Pro Member",
     onNavigate: (String) -> Unit = {},
-    onLogOut: () -> Unit = {}
+    onLogOut: () -> Unit = {},
+    onLanguageChanged: () -> Unit = {}
 ) {
-
+    val configuration = LocalConfiguration.current
     val context = LocalContext.current
 
     // SharedPreferences allows settings to remain saved
@@ -77,28 +77,60 @@ fun SettingsScreen(
 
     val selectedUnit = AppSettings.temperatureUnit
 
-    var isDarkMode by remember {
-        mutableStateOf(
-            preferences.getBoolean(
-                "dark_mode",
-                true
-            )
-        )
-    }
-
+    // Keep compatibility with the language preference already stored by LuminaScout.
     var currentLanguage by remember {
-        mutableStateOf(
-            preferences.getString(
-                "language",
-                "English"
-            ) ?: "English"
-        )
+        mutableStateOf(preferences.getString("language", "English") ?: "English")
     }
+    var showLanguageDialog by remember { mutableStateOf(false) }
+
+    val languageCode = when (currentLanguage) {
+        "Afrikaans" -> "af"
+        "isiXhosa" -> "xh"
+        else -> "en"
+    }
+    val currentConfiguration = LocalConfiguration.current
+
+    val localizedContext = remember(context, languageCode, currentConfiguration) {
+        val configuration = Configuration(currentConfiguration)
+        configuration.setLocale(Locale.forLanguageTag(languageCode))
+        context.createConfigurationContext(configuration)
+    }
+    fun translated(id: Int): String = localizedContext.getString(id)
 
     val darkBackground = Color(0xFF0F141C)
     val cardBackground = Color(0xFF1B222D)
+    val foreground = Color.White
     val accentOrange = Color(0xFFFF9800)
-    val textMuted = Color(0xFF8C93A0)
+    val textMuted = foreground.copy(alpha = 0.62f)
+
+    if (showLanguageDialog) {
+        AlertDialog(
+            onDismissRequest = { showLanguageDialog = false },
+            title = { Text(translated(R.string.ls_choose_language)) },
+            text = {
+                Column {
+                    listOf("English", "Afrikaans", "isiXhosa").forEach { language ->
+                        TextButton(
+                            onClick = {
+                                currentLanguage = language
+                                preferences.edit().putString("language", language).apply()
+                                showLanguageDialog = false
+                                onLanguageChanged()
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(language)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showLanguageDialog = false }) {
+                    Text(translated(R.string.ls_cancel))
+                }
+            }
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -153,54 +185,25 @@ fun SettingsScreen(
 
                     Text(
                         text = userName.ifBlank {
-                            "User Account"
+                            translated(R.string.ls_user_account)
                         },
-                        color = Color.White,
+                        color = foreground,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Bold
                     )
 
                     Spacer(modifier = Modifier.height(2.dp))
 
-                    Text(
-                        text = userEmail,
-                        color = textMuted,
-                        fontSize = 12.sp
-                    )
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    Text(
-                        text = membershipStatus,
-                        color = accentOrange,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-
-                IconButton(
-                    onClick = {
-                        Toast.makeText(
-                            context,
-                            "Edit Profile",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    },
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(
-                            Color.White.copy(alpha = 0.08f)
+                    if (userEmail.isNotBlank()) {
+                        Text(
+                            text = userEmail,
+                            color = textMuted,
+                            fontSize = 12.sp
                         )
-                ) {
+                    }
 
-                    Icon(
-                        imageVector = Icons.Outlined.Edit,
-                        contentDescription = "Edit Profile",
-                        tint = Color.White,
-                        modifier = Modifier.size(18.dp)
-                    )
                 }
+
             }
         }
 
@@ -211,7 +214,7 @@ fun SettingsScreen(
         // ---------------------------------------------------------
 
         Text(
-            text = "PREFERENCES",
+            text = translated(R.string.ls_preferences),
             color = textMuted,
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
@@ -239,29 +242,9 @@ fun SettingsScreen(
                 // LANGUAGE
                 SettingRow(
                     icon = Icons.Outlined.Language,
-                    title = "Language",
+                    title = translated(R.string.ls_language),
                     textMuted = textMuted,
-                    onClick = {
-
-                        currentLanguage = when (currentLanguage) {
-                            "English" -> "Afrikaans"
-                            "Afrikaans" -> "isiXhosa"
-                            else -> "English"
-                        }
-
-                        preferences.edit()
-                            .putString(
-                                "language",
-                                currentLanguage
-                            )
-                            .apply()
-
-                        Toast.makeText(
-                            context,
-                            "Language: $currentLanguage",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
+                    onClick = { showLanguageDialog = true }
                 ) {
 
                     Text(
@@ -272,13 +255,13 @@ fun SettingsScreen(
                 }
 
                 Divider(
-                    color = Color.White.copy(alpha = 0.06f)
+                    color = foreground.copy(alpha = 0.10f)
                 )
 
                 // NOTIFICATIONS
                 SettingRow(
                     icon = Icons.Outlined.Notifications,
-                    title = "Notifications",
+                    title = translated(R.string.ls_notifications),
                     textMuted = textMuted
                 ) {
 
@@ -306,13 +289,13 @@ fun SettingsScreen(
                 }
 
                 Divider(
-                    color = Color.White.copy(alpha = 0.06f)
+                    color = foreground.copy(alpha = 0.10f)
                 )
 
                 // UNITS
                 SettingRow(
                     icon = Icons.Outlined.Thermostat,
-                    title = "Units",
+                    title = translated(R.string.ls_units),
                     textMuted = textMuted
                 ) {
 
@@ -320,7 +303,7 @@ fun SettingsScreen(
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
                             .background(
-                                Color.White.copy(alpha = 0.08f)
+                                foreground.copy(alpha = 0.08f)
                             )
                             .padding(2.dp)
                     ) {
@@ -341,135 +324,10 @@ fun SettingsScreen(
                             AppSettings.temperatureUnit = "°C"
                         }
                     }
-                }
-
-                Divider(
-                    color = Color.White.copy(alpha = 0.06f)
-                )
-
-                // DARK MODE
-                SettingRow(
-                    icon = Icons.Outlined.DarkMode,
-                    title = "Dark Mode",
-                    textMuted = textMuted
-                ) {
-
-                    Switch(
-                        checked = isDarkMode,
-                        onCheckedChange = { enabled ->
-
-                            isDarkMode = enabled
-
-                            preferences.edit()
-                                .putBoolean(
-                                    "dark_mode",
-                                    enabled
-                                )
-                                .apply()
-                        },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = accentOrange,
-                            uncheckedThumbColor = textMuted,
-                            uncheckedTrackColor =
-                                Color.White.copy(alpha = 0.1f)
-                        )
-                    )
-                }
-            }
+                }            }
         }
 
         Spacer(modifier = Modifier.height(20.dp))
-
-        // ---------------------------------------------------------
-        // ACCOUNT
-        // ---------------------------------------------------------
-
-        Text(
-            text = "ACCOUNT",
-            color = textMuted,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(
-                start = 4.dp,
-                bottom = 8.dp
-            )
-        )
-
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = cardBackground
-            ),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-
-            Column(
-                modifier = Modifier.padding(
-                    horizontal = 16.dp,
-                    vertical = 4.dp
-                )
-            ) {
-
-                // SUBSCRIPTION
-                SettingRow(
-                    icon = Icons.Outlined.Tune,
-                    title = "Subscription & Billing",
-                    textMuted = textMuted,
-                    onClick = {
-
-                        Toast.makeText(
-                            context,
-                            "Navigating to Billing",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                ) {
-
-                    Icon(
-                        imageVector = Icons.Default.ChevronRight,
-                        contentDescription = null,
-                        tint = textMuted
-                    )
-                }
-
-                Divider(
-                    color = Color.White.copy(alpha = 0.06f)
-                )
-
-                // SAVED LOCATIONS
-                SettingRow(
-                    icon = Icons.Outlined.Star,
-                    title = "Saved Locations",
-                    textMuted = textMuted,
-                    onClick = {
-                        onNavigate("scout")
-                    }
-                ) {
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-
-                        Text(
-                            text = "3",
-                            color = textMuted,
-                            fontSize = 13.sp
-                        )
-
-                        Spacer(modifier = Modifier.width(4.dp))
-
-                        Icon(
-                            imageVector = Icons.Default.ChevronRight,
-                            contentDescription = null,
-                            tint = textMuted
-                        )
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
 
         // ---------------------------------------------------------
         // LOG OUT
@@ -495,14 +353,14 @@ fun SettingsScreen(
 
                 Icon(
                     imageVector = Icons.Default.ExitToApp,
-                    contentDescription = "Log Out",
+                    contentDescription = translated(R.string.ls_log_out),
                     modifier = Modifier.size(20.dp)
                 )
 
                 Spacer(modifier = Modifier.width(8.dp))
 
                 Text(
-                    text = "Log Out",
+                    text = translated(R.string.ls_log_out),
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold
                 )

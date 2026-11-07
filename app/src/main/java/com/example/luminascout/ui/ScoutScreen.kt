@@ -1,4 +1,8 @@
+
+
 package com.example.luminascout.ui
+
+import com.example.luminascout.R
 
 import android.Manifest
 import android.content.Context
@@ -9,6 +13,15 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import kotlinx.coroutines.launch
+import com.google.android.gms.maps.CameraUpdateFactory
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -39,6 +52,20 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
 import org.json.JSONObject
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.android.gms.maps.model.CameraPosition
+import com.google.android.gms.maps.model.LatLng
+import com.google.maps.android.compose.MapType
+import com.google.maps.android.compose.GoogleMap
+import com.google.maps.android.compose.MapProperties
+import com.google.maps.android.compose.MapUiSettings
+import com.google.maps.android.compose.Marker
+import com.google.maps.android.compose.rememberCameraPositionState
+import com.google.maps.android.compose.rememberMarkerState
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.DocumentSnapshot
+import androidx.compose.ui.res.stringResource
 
 @Composable
 fun ScoutScreen(
@@ -47,6 +74,23 @@ fun ScoutScreen(
 ) {
     val context = LocalContext.current
 
+    val cameraPositionState = rememberCameraPositionState {
+        position = CameraPosition.fromLatLngZoom(
+            LatLng(-33.9249, 18.4241),
+            11f
+        )
+    }
+
+    var mapType by remember {
+        mutableStateOf(MapType.NORMAL)
+    }
+
+    var savedPanelExpanded by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val panelHeight by animateDpAsState(
+        targetValue = if (savedPanelExpanded) 320.dp else 76.dp,
+        label = "Saved locations panel"
+    )
     val darkBackground = Color(0xFF070A10)
     val cardBackground = Color(0xFF131924)
     val accentOrange = Color(0xFFFF9800)
@@ -55,9 +99,13 @@ fun ScoutScreen(
     val textMuted = Color(0xFF8C93A0)
 
     var showAddDialog by remember { mutableStateOf(false) }
+    var showLocationChoice by remember { mutableStateOf(false) }
+    var selectedMapPoint by remember { mutableStateOf<LatLng?>(null) }
+    var locationToMove by remember { mutableStateOf<ScoutLocation?>(null) }
+    var isUsingMapPoint by remember { mutableStateOf(false) }
     var currentLocation by remember { mutableStateOf<Location?>(null) }
     var locationError by remember { mutableStateOf<String?>(null) }
-
+    var searchQuery by remember { mutableStateOf("") }
     var locationName by remember { mutableStateOf("") }
     var locationNotes by remember { mutableStateOf("") }
     var parkingDetails by remember { mutableStateOf("") }
@@ -67,10 +115,37 @@ fun ScoutScreen(
         mutableStateListOf<ScoutLocation>()
     }
 
-    // Load locations saved on this device
-    LaunchedEffect(Unit) {
+    // Start with saved device data, then listen for cloud locations belonging to
+    // the signed-in Firebase user. Only missing IDs are imported: an older cloud
+    // snapshot must never replace a pin corrected on this phone while offline.
+    val firebaseUid = FirebaseAuth.getInstance().currentUser?.uid
+    DisposableEffect(context, firebaseUid) {
         savedLocations.clear()
-        savedLocations.addAll(loadSavedLocations(context))
+        savedLocations.addAll(loadSavedLocations(context).distinctBy { it.id })
+
+        val registration = if (firebaseUid != null) {
+            FirebaseFirestore.getInstance()
+                .collection("users")
+                .document(firebaseUid)
+                .collection("scoutingLocations")
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        android.util.Log.e("LuminaScoutSync", "Cloud download failed", error)
+                    } else {
+                        snapshot?.documents?.forEach { document ->
+                            val cloudLocation = document.toScoutLocationOrNull()
+                            if (cloudLocation != null &&
+                                savedLocations.none { it.id == cloudLocation.id }
+                            ) {
+                                replaceSavedLocation(context, cloudLocation)
+                                savedLocations.add(cloudLocation)
+                            }
+                        }
+                    }
+                }
+        } else null
+
+        onDispose { registration?.remove() }
     }
 
     fun getCurrentDeviceLocation() {
@@ -146,396 +221,332 @@ fun ScoutScreen(
         }
     }
 
+    val matchingLocations = savedLocations.filter { location ->
+        location.name.contains(searchQuery, ignoreCase = true) ||
+                location.notes.contains(searchQuery, ignoreCase = true)
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(darkBackground)
     ) {
-
-        // ---------------------------------------------------------
-        // STYLIZED MAP BACKGROUND
-        // ---------------------------------------------------------
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xFF090D15))
+        // The map stays visible behind the floating controls and bottom panel.
+        GoogleMap(
+            modifier = Modifier.fillMaxSize(),
+            onMapClick = { point ->
+                selectedMapPoint = point
+                // The temporary marker shows where a new or moved pin will go.
+            },
+            cameraPositionState = cameraPositionState,
+            properties = MapProperties(mapType = mapType),
+            uiSettings = MapUiSettings(
+                zoomControlsEnabled = false,
+                compassEnabled = true,
+                zoomGesturesEnabled = true,
+                scrollGesturesEnabled = true,
+                rotationGesturesEnabled = true
+            )
         ) {
-
-            Canvas(modifier = Modifier.fillMaxSize()) {
-
-                val gridColor = Color.White.copy(alpha = 0.05f)
-                val roadColor = Color(0xFF1E293B)
-
-                drawLine(
-                    color = Color.White.copy(alpha = 0.08f),
-                    start = Offset(size.width * 0.51f, 0f),
-                    end = Offset(size.width * 0.51f, size.height),
-                    strokeWidth = 1.5.dp.toPx()
-                )
-
-                drawLine(
-                    gridColor,
-                    Offset(0f, size.height * 0.16f),
-                    Offset(size.width, size.height * 0.16f),
-                    1.dp.toPx()
-                )
-
-                drawLine(
-                    gridColor,
-                    Offset(0f, size.height * 0.35f),
-                    Offset(size.width, size.height * 0.35f),
-                    1.dp.toPx()
-                )
-
-                val roadPath = Path().apply {
-                    moveTo(0f, size.height * 0.40f)
-                    cubicTo(
-                        size.width * 0.3f,
-                        size.height * 0.39f,
-                        size.width * 0.7f,
-                        size.height * 0.41f,
-                        size.width,
-                        size.height * 0.40f
-                    )
-                }
-
-                drawPath(
-                    path = roadPath,
-                    color = roadColor,
-                    style = Stroke(width = 4.dp.toPx())
+            selectedMapPoint?.let { point ->
+                Marker(
+                    state = rememberMarkerState(key = "selected-${point.latitude}-${point.longitude}", position = point),
+                    title = if (locationToMove != null) "New position for saved pin" else "Selected location",
+                    snippet = "Tap + to save this location"
                 )
             }
-
-            Box(
-                modifier = Modifier
-                    .offset(x = (-50).dp, y = 180.dp)
-                    .width(250.dp)
-                    .height(120.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF143022).copy(alpha = 0.85f))
-            )
-
-            Box(
-                modifier = Modifier
-                    .offset(x = 240.dp, y = 140.dp)
-                    .width(220.dp)
-                    .height(115.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF132A42).copy(alpha = 0.85f))
-            )
-
-            MapPinMarker(
-                modifier = Modifier.offset(x = 132.dp, y = 230.dp),
-                pinColor = accentOrange
-            ) {
-                Icon(
-                    imageVector = Icons.Default.CameraAlt,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp)
+            savedLocations.forEach { location ->
+                Marker(
+                    state = rememberMarkerState(
+                        key = "${location.id}-${location.latitude}-${location.longitude}",
+                        position = LatLng(location.latitude, location.longitude)
+                    ),
+                    title = location.name,
+                    snippet = location.notes,
+                    onInfoWindowClick = { onLocationClick(location) }
                 )
-            }
-
-            MapPinMarker(
-                modifier = Modifier.offset(x = 250.dp, y = 150.dp),
-                pinColor = accentBlue
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Place,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-
-            MapPinMarker(
-                modifier = Modifier.offset(x = 88.dp, y = 330.dp),
-                pinColor = accentGreen
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Star,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-
-            Box(
-                modifier = Modifier
-                    .offset(x = 193.dp, y = 310.dp)
-                    .size(20.dp)
-                    .clip(CircleShape)
-                    .background(accentBlue.copy(alpha = 0.25f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(10.dp)
-                        .clip(CircleShape)
-                        .background(accentBlue)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(4.dp)
-                            .clip(CircleShape)
-                            .background(Color.White)
-                            .align(Alignment.Center)
-                    )
-                }
-            }
-
-            // -----------------------------------------------------
-            // ADD LOCATION BUTTON
-            // -----------------------------------------------------
-
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .offset(x = (-20).dp, y = (-20).dp)
-            ) {
-
-                Box(
-                    modifier = Modifier
-                        .size(62.dp)
-                        .clip(RoundedCornerShape(22.dp))
-                        .background(accentOrange.copy(alpha = 0.25f))
-                        .blur(8.dp)
-                )
-
-                Box(
-                    modifier = Modifier
-                        .size(60.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(accentOrange)
-                        .clickable {
-                            addLocationButtonClicked()
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Add Spot",
-                        tint = Color.Black,
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
             }
         }
 
-        // ---------------------------------------------------------
-        // SEARCH BAR
-        // ---------------------------------------------------------
-
+        // Search only saved scouting locations.
         Row(
             modifier = Modifier
+                .align(Alignment.TopCenter)
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = {
+                    searchQuery = it
+                    if (it.isNotBlank()) savedPanelExpanded = true
+                },
+                placeholder = {
+                    Text(stringResource(R.string.ls_search_saved_locations), color = textMuted, fontSize = 14.sp)
+                },
+                leadingIcon = {
+                    Icon(Icons.Default.Search, contentDescription = stringResource(R.string.ls_search), tint = textMuted)
+                },
+                singleLine = true,
+                modifier = Modifier.weight(1f).height(56.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    focusedContainerColor = cardBackground,
+                    unfocusedContainerColor = cardBackground
+                )
+            )
 
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = cardBackground,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(52.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = null,
-                        tint = textMuted
-                    )
-
-                    Spacer(modifier = Modifier.width(12.dp))
-
-                    Text(
-                        text = "Search locations...",
-                        color = textMuted,
-                        fontSize = 14.sp
-                    )
-                }
-            }
-
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = cardBackground,
-                modifier = Modifier
-                    .size(52.dp)
-                    .clickable {
-                        onNavigate("scout")
+                modifier = Modifier.size(52.dp).clickable {
+                    mapType = when (mapType) {
+                        MapType.NORMAL -> MapType.SATELLITE
+                        MapType.SATELLITE -> MapType.TERRAIN
+                        else -> MapType.NORMAL
                     }
+                }
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
-                        imageVector = Icons.Default.Layers,
-                        contentDescription = null,
+                        Icons.Default.Layers,
+                        contentDescription = stringResource(R.string.ls_change_map_type),
                         tint = Color.White
                     )
                 }
             }
         }
 
-        // ---------------------------------------------------------
-        // SAVED LOCATIONS
-        // ---------------------------------------------------------
-
+        // Saved Locations: swipe UP on the header to expand, DOWN to collapse.
         Surface(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .fillMaxWidth(),
-            shape = RoundedCornerShape(
-                topStart = 24.dp,
-                topEnd = 24.dp
-            ),
+                .fillMaxWidth()
+                .height(panelHeight),
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
             color = cardBackground
         ) {
-
-            Column(
-                modifier = Modifier.padding(
-                    horizontal = 20.dp,
-                    vertical = 12.dp
-                )
-            ) {
-
-                Box(
+            Column {
+                var totalDrag by remember { mutableFloatStateOf(0f) }
+                Column(
                     modifier = Modifier
-                        .width(38.dp)
-                        .height(4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(textMuted.copy(alpha = 0.35f))
-                        .align(Alignment.CenterHorizontally)
-                )
+                        .fillMaxWidth()
+                        .pointerInput(Unit) {
+                            detectVerticalDragGestures(
+                                onDragStart = { totalDrag = 0f },
+                                onVerticalDrag = { change, dragAmount ->
+                                    change.consume()
+                                    totalDrag += dragAmount
+                                },
+                                onDragEnd = {
+                                    if (totalDrag < -30f) savedPanelExpanded = true
+                                    if (totalDrag > 30f) savedPanelExpanded = false
+                                }
+                            )
+                        }
+                        .clickable { savedPanelExpanded = !savedPanelExpanded }
+                        .padding(horizontal = 20.dp, vertical = 10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(38.dp)
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(textMuted.copy(alpha = 0.55f))
+                            .align(Alignment.CenterHorizontally)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            stringResource(R.string.ls_saved_locations),
+                            color = Color.White,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("${savedLocations.size} pins", color = textMuted, fontSize = 12.sp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Icon(
+                                if (savedPanelExpanded) Icons.Default.KeyboardArrowDown
+                                else Icons.Default.KeyboardArrowUp,
+                                contentDescription = if (savedPanelExpanded) "Collapse saved locations"
+                                else "Expand saved locations",
+                                tint = Color.White
+                            )
+                        }
+                    }
+                }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                if (savedPanelExpanded) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 20.dp)
+                    ) {
+                        if (matchingLocations.isEmpty()) {
+                            Text(
+                                if (searchQuery.isBlank()) stringResource(R.string.ls_no_saved_locations_yet_tap_to_add_one)
+                                else stringResource(R.string.ls_no_saved_locations_match_your_search),
+                                color = textMuted,
+                                fontSize = 14.sp,
+                                modifier = Modifier.padding(vertical = 20.dp)
+                            )
+                        }
+                        matchingLocations.forEach { location ->
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(modifier = Modifier.weight(1f)) {
+                                    LocationPinRow(
+                                        title = location.name,
+                                        distance = stringResource(R.string.ls_tap_to_show_on_map),
+                                        score = "—",
+                                        dotColor = accentOrange,
+                                        onClick = {
+                                            savedPanelExpanded = false
+                                            scope.launch {
+                                                cameraPositionState.animate(
+                                                    CameraUpdateFactory.newLatLngZoom(
+                                                        LatLng(location.latitude, location.longitude),
+                                                        15f
+                                                    )
+                                                )
+                                            }
+                                        }
+                                    )
+                                }
+                                TextButton(onClick = {
+                                    locationToMove = location
+                                    selectedMapPoint = null
+                                    savedPanelExpanded = false
+                                    scope.launch {
+                                        cameraPositionState.animate(
+                                            CameraUpdateFactory.newLatLngZoom(
+                                                LatLng(location.latitude, location.longitude), 15f
+                                            )
+                                        )
+                                    }
+                                }) {
+                                    Text(stringResource(R.string.ls_move_pin), color = accentOrange)
+                                }
+                                TextButton(onClick = { onLocationClick(location) }) {
+                                    Text("Details", color = accentOrange)
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
+                }
+            }
+        }
 
+        // Add button floats immediately above the Saved Locations panel.
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 20.dp, bottom = panelHeight + 16.dp)
+                .size(60.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(accentOrange)
+                .clickable {
+                    if (locationToMove != null && selectedMapPoint != null) {
+                        // Handled by the confirmation dialog below.
+                        showLocationChoice = true
+                    } else if (locationToMove != null) {
+                        locationError = "Tap the correct spot on the map, then tap + to move the pin."
+                    } else {
+                        showLocationChoice = true
+                    }
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "Add scouting location",
+                tint = Color.Black,
+                modifier = Modifier.size(28.dp)
+            )
+        }
+
+        if (locationToMove != null) {
+            Surface(
+                modifier = Modifier.align(Alignment.TopCenter)
+                    .padding(top = 84.dp, start = 16.dp, end = 16.dp),
+                color = cardBackground,
+                shape = RoundedCornerShape(14.dp)
+            ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-
-                    Text(
-                        text = "Saved Locations",
-                        color = Color.White,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    Text(
-                        text = "${3 + savedLocations.size} pins",
-                        color = textMuted,
-                        fontSize = 12.sp
-                    )
+                    Text("Tap the correct map position for ${locationToMove?.name}",
+                        color = Color.White, modifier = Modifier.weight(1f), fontSize = 12.sp)
+                    TextButton(onClick = {
+                        locationToMove = null
+                        selectedMapPoint = null
+                    }) { Text("Cancel", color = accentOrange) }
                 }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Existing location 1
-                LocationPinRow(
-                    title = "Signal Hill Viewpoint",
-                    distance = "2.4 mi",
-                    score = "92",
-                    dotColor = accentOrange,
-                    onClick = {
-                        onLocationClick(
-                            ScoutLocation(
-                                id = "1",
-                                name = "Signal Hill Viewpoint",
-                                description = "Panoramas & Sunset Views",
-                                photoScore = 92,
-                                goldenHourTime = "6:42 PM",
-                                distance = "2.4 mi",
-                                latitude = -33.9249,
-                                longitude = 18.4241,
-                                notes = "Panoramas and sunset views",
-                                parkingDetails = "Street parking",
-                                shootingAngle = "Wide angle toward the city"
-                            )
-                        )
-                    }
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Existing location 2
-                LocationPinRow(
-                    title = "Kirstenbosch Canopy Walk",
-                    distance = "5.1 mi",
-                    score = "85",
-                    dotColor = accentBlue,
-                    onClick = {
-                        onLocationClick(
-                            ScoutLocation(
-                                id = "2",
-                                name = "Kirstenbosch Canopy Walk",
-                                description = "Forest & Mountain Backdrop",
-                                photoScore = 85,
-                                goldenHourTime = "6:42 PM",
-                                distance = "5.1 mi",
-                                latitude = -33.9881,
-                                longitude = 18.4324,
-                                notes = "Forest and mountain backdrop",
-                                parkingDetails = "Parking available",
-                                shootingAngle = "Mountain-facing angle"
-                            )
-                        )
-                    }
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Existing location 3
-                LocationPinRow(
-                    title = "Bloubergstrand Beach",
-                    distance = "8.3 mi",
-                    score = "96",
-                    dotColor = accentGreen,
-                    onClick = {
-                        onLocationClick(
-                            ScoutLocation(
-                                id = "3",
-                                name = "Bloubergstrand Beach",
-                                description = "Table Mountain Ocean View",
-                                photoScore = 96,
-                                goldenHourTime = "6:42 PM",
-                                distance = "8.3 mi",
-                                latitude = -33.8206,
-                                longitude = 18.4740,
-                                notes = "Table Mountain ocean view",
-                                parkingDetails = "Beach parking",
-                                shootingAngle = "Face Table Mountain across the water"
-                            )
-                        )
-                    }
-                )
-
-                // -------------------------------------------------
-                // NEW USER-SAVED LOCATIONS
-                // -------------------------------------------------
-
-                savedLocations.forEach { location ->
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    LocationPinRow(
-                        title = location.name,
-                        distance = "GPS pin",
-                        score = "—",
-                        dotColor = accentOrange,
-                        onClick = {
-                            onLocationClick(location)
-                        }
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
             }
+        }
+
+        if (showLocationChoice) {
+            AlertDialog(
+                onDismissRequest = { showLocationChoice = false },
+                title = { Text(if (locationToMove != null) "Correct saved pin" else "Choose location source") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (locationToMove != null) {
+                            Text("Move ${locationToMove?.name} to the selected point? Your notes and other details will stay the same.")
+                            TextButton(onClick = {
+                                val old = locationToMove
+                                val point = selectedMapPoint
+                                if (old != null && point != null) {
+                                    val corrected = old.copy(latitude = point.latitude, longitude = point.longitude)
+                                    replaceSavedLocation(context, corrected)
+                                    val index = savedLocations.indexOfFirst { it.id == old.id }
+                                    if (index >= 0) savedLocations[index] = corrected
+                                    syncLocationToFirestore(corrected)
+                                    locationToMove = null
+                                    selectedMapPoint = null
+                                    showLocationChoice = false
+                                }
+                            }) { Text("Save corrected position") }
+                        } else {
+                            TextButton(onClick = {
+                                if (selectedMapPoint == null) {
+                                    showLocationChoice = false
+                                    locationError = "Tap the desired place on the map first, then tap +."
+                                } else {
+                                    isUsingMapPoint = true
+                                    currentLocation = null
+                                    showLocationChoice = false
+                                    showAddDialog = true
+                                }
+                            }) { Text("Use selected map point") }
+                            TextButton(onClick = {
+                                isUsingMapPoint = false
+                                selectedMapPoint = null
+                                showLocationChoice = false
+                                addLocationButtonClicked()
+                            }) { Text("Use my current GPS location") }
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = { TextButton(onClick = { showLocationChoice = false }) { Text("Cancel") } }
+            )
         }
 
         // ---------------------------------------------------------
@@ -587,7 +598,7 @@ fun ScoutScreen(
                     ) {
 
                         Text(
-                            text = "GPS location captured",
+                            text = if (isUsingMapPoint) "Map location selected" else "GPS location captured",
                             fontSize = 12.sp,
                             color = textMuted
                         )
@@ -650,9 +661,10 @@ fun ScoutScreen(
                                 return@TextButton
                             }
 
-                            val location = currentLocation
+                            val latitude = if (isUsingMapPoint) selectedMapPoint?.latitude else currentLocation?.latitude
+                            val longitude = if (isUsingMapPoint) selectedMapPoint?.longitude else currentLocation?.longitude
 
-                            if (location == null) {
+                            if (latitude == null || longitude == null) {
                                 locationError =
                                     "Location could not be found. Please try again."
                                 return@TextButton
@@ -665,8 +677,8 @@ fun ScoutScreen(
                                 photoScore = 0,
                                 goldenHourTime = "--",
                                 distance = "GPS pin",
-                                latitude = location.latitude,
-                                longitude = location.longitude,
+                                latitude = latitude,
+                                longitude = longitude,
                                 notes = locationNotes.trim(),
                                 parkingDetails = parkingDetails.trim(),
                                 shootingAngle = shootingAngle.trim()
@@ -676,11 +688,47 @@ fun ScoutScreen(
 
                             savedLocations.add(newLocation)
 
+                            // Synchronise this location with Firestore when signed in with Google
+                            val firebaseUser = FirebaseAuth.getInstance().currentUser
+
+                            if (firebaseUser != null) {
+                                val locationData = hashMapOf(
+                                    "id" to newLocation.id,
+                                    "name" to newLocation.name,
+                                    "description" to newLocation.description,
+                                    "photoScore" to newLocation.photoScore,
+                                    "goldenHourTime" to newLocation.goldenHourTime,
+                                    "distance" to newLocation.distance,
+                                    "latitude" to newLocation.latitude,
+                                    "longitude" to newLocation.longitude,
+                                    "notes" to newLocation.notes,
+                                    "parkingDetails" to newLocation.parkingDetails,
+                                    "shootingAngle" to newLocation.shootingAngle,
+                                    "updatedAt" to FieldValue.serverTimestamp()
+                                )
+
+                                FirebaseFirestore.getInstance()
+                                    .collection("users")
+                                    .document(firebaseUser.uid)
+                                    .collection("scoutingLocations")
+                                    .document(newLocation.id)
+                                    .set(locationData)
+                                    .addOnFailureListener { error ->
+                                        android.util.Log.e(
+                                            "LuminaScoutSync",
+                                            "Firestore sync failed",
+                                            error
+                                        )
+                                    }
+                            }
+
                             locationName = ""
                             locationNotes = ""
                             parkingDetails = ""
                             shootingAngle = ""
                             currentLocation = null
+                            selectedMapPoint = null
+                            isUsingMapPoint = false
                             showAddDialog = false
                         }
                     ) {
@@ -740,6 +788,10 @@ private fun saveLocation(
         )?.toMutableSet()
             ?: mutableSetOf()
 
+    existing.removeAll { raw ->
+        try { JSONObject(raw).optString("id") == location.id }
+        catch (_: Exception) { false }
+    }
     existing.add(locationJson.toString())
 
     preferences.edit()
@@ -751,7 +803,7 @@ private fun saveLocation(
 // LOAD SAVED LOCATIONS
 // -------------------------------------------------------------
 
-private fun loadSavedLocations(
+fun loadSavedLocations(
     context: Context
 ): List<ScoutLocation> {
 
@@ -911,5 +963,78 @@ private fun LocationPinRow(
                 fontWeight = FontWeight.Bold
             )
         }
+    }
+}
+// Replace an existing local pin without duplicating it or losing its notes.
+fun replaceSavedLocation(context: Context, location: ScoutLocation) {
+    val preferences = context.getSharedPreferences("scout_locations", Context.MODE_PRIVATE)
+    val current = preferences.getStringSet("locations", emptySet()).orEmpty()
+    val updated = current.filterNot { raw ->
+        try { JSONObject(raw).optString("id") == location.id } catch (_: Exception) { false }
+    }.toMutableSet()
+    updated.add(JSONObject().apply {
+        put("id", location.id)
+        put("name", location.name)
+        put("description", location.description)
+        put("photoScore", location.photoScore)
+        put("goldenHourTime", location.goldenHourTime)
+        put("distance", location.distance)
+        put("latitude", location.latitude)
+        put("longitude", location.longitude)
+        put("notes", location.notes)
+        put("parkingDetails", location.parkingDetails)
+        put("shootingAngle", location.shootingAngle)
+    }.toString())
+    preferences.edit().putStringSet("locations", updated).apply()
+}
+
+fun syncLocationToFirestore(location: ScoutLocation) {
+    val user = FirebaseAuth.getInstance().currentUser ?: return
+    val data = hashMapOf(
+        "id" to location.id,
+        "name" to location.name,
+        "description" to location.description,
+        "photoScore" to location.photoScore,
+        "goldenHourTime" to location.goldenHourTime,
+        "distance" to location.distance,
+        "latitude" to location.latitude,
+        "longitude" to location.longitude,
+        "notes" to location.notes,
+        "parkingDetails" to location.parkingDetails,
+        "shootingAngle" to location.shootingAngle,
+        "updatedAt" to FieldValue.serverTimestamp()
+    )
+    FirebaseFirestore.getInstance().collection("users").document(user.uid)
+        .collection("scoutingLocations").document(location.id).set(data)
+        .addOnFailureListener { error ->
+            android.util.Log.e("LuminaScoutSync", "Pin correction sync failed", error)
+        }
+}
+
+// Convert a Firestore document into the same model used by local saved pins.
+// Missing optional fields get safe defaults, while invalid coordinates are skipped.
+private fun DocumentSnapshot.toScoutLocationOrNull(): ScoutLocation? {
+    return try {
+        val lat = getDouble("latitude") ?: return null
+        val lon = getDouble("longitude") ?: return null
+        if (!lat.isFinite() || !lon.isFinite() || lat !in -90.0..90.0 || lon !in -180.0..180.0) {
+            return null
+        }
+        ScoutLocation(
+            id = id,
+            name = getString("name") ?: "Unnamed location",
+            description = getString("description") ?: "User saved scouting location",
+            photoScore = getLong("photoScore")?.toInt() ?: 0,
+            goldenHourTime = getString("goldenHourTime") ?: "--",
+            distance = getString("distance") ?: "GPS pin",
+            latitude = lat,
+            longitude = lon,
+            notes = getString("notes") ?: "",
+            parkingDetails = getString("parkingDetails") ?: "",
+            shootingAngle = getString("shootingAngle") ?: ""
+        )
+    } catch (error: Exception) {
+        android.util.Log.e("LuminaScoutSync", "Could not read cloud location $id", error)
+        null
     }
 }

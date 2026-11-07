@@ -1,5 +1,11 @@
 package com.example.luminascout.ui
 
+import com.example.luminascout.R
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.platform.LocalContext
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -11,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,7 +34,7 @@ import androidx.compose.ui.unit.sp
 import com.example.luminascout.AppSettings
 import com.example.luminascout.Data.RetrofitClient
 import com.example.luminascout.Data.ScoutLocation
-
+import androidx.compose.ui.res.stringResource
 @Composable
 fun HomeScreen(
     userName: String,
@@ -36,6 +43,20 @@ fun HomeScreen(
     onNotificationClick: () -> Unit = {},
     onLocationClick: (ScoutLocation) -> Unit = {}
 ) {
+
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var savedScoutLocations by remember { mutableStateOf(loadSavedLocations(context)) }
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                savedScoutLocations = loadSavedLocations(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    var showSavedLocationsDialog by remember { mutableStateOf(false) }
 
     // ---------------------------------------------------------
     // LIVE WEATHER DATA
@@ -163,6 +184,49 @@ fun HomeScreen(
     // MAIN SCREEN
     // ---------------------------------------------------------
 
+    if (showSavedLocationsDialog) {
+        AlertDialog(
+            onDismissRequest = { showSavedLocationsDialog = false },
+            title = { Text("Saved scouting locations") },
+            text = {
+                Column(
+                    modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (savedScoutLocations.isEmpty()) {
+                        Text("No saved locations yet. Add one from Scout.")
+                    } else {
+                        savedScoutLocations.sortedBy { it.name.lowercase() }.forEach { location ->
+                            TextButton(
+                                onClick = {
+                                    showSavedLocationsDialog = false
+                                    onLocationClick(location)
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Place, contentDescription = null)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(location.name, modifier = Modifier.weight(1f))
+                                    Icon(Icons.Default.ChevronRight, contentDescription = null)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showSavedLocationsDialog = false
+                    onNavigate("scout")
+                }) { Text("Open Scout map") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSavedLocationsDialog = false }) { Text("Close") }
+            }
+        )
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -190,7 +254,7 @@ fun HomeScreen(
             Column {
 
                 Text(
-                    text = "Good evening",
+                    text = stringResource(R.string.ls_good_evening),
                     style =
                         MaterialTheme.typography.bodyMedium,
                     color =
@@ -253,212 +317,50 @@ fun HomeScreen(
         )
 
         // -----------------------------------------------------
-        // NEXT SHOOT
-        // -----------------------------------------------------
-
+        // SAVED SCOUTING LOCATIONS: show a list instead of a featured pin.
         Text(
-            text = "NEXT SHOOT",
-            style =
-                MaterialTheme.typography.labelMedium,
-            fontWeight =
-                FontWeight.Bold,
-            color =
-                MaterialTheme.colorScheme
-                    .onBackground
-                    .copy(alpha = 0.5f),
+            text = "SAVED SCOUTING LOCATIONS",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
             letterSpacing = 1.sp
         )
-
-        Spacer(
-            modifier = Modifier.height(8.dp)
-        )
-
+        Spacer(Modifier.height(8.dp))
         Card(
-            shape =
-                RoundedCornerShape(16.dp),
-            colors =
-                CardDefaults.cardColors(
-                    containerColor =
-                        MaterialTheme.colorScheme
-                            .surface
-                ),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable {
-                    onNextShootClick()
-                }
+            modifier = Modifier.fillMaxWidth().clickable {
+                savedScoutLocations = loadSavedLocations(context)
+                showSavedLocationsDialog = true
+            },
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
         ) {
-
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                horizontalArrangement =
-                    Arrangement.SpaceBetween,
-                verticalAlignment =
-                    Alignment.CenterVertically
+                modifier = Modifier.fillMaxWidth().padding(18.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-
-                Column(
-                    modifier = Modifier.weight(1f)
-                ) {
-
-                    Row(
-                        verticalAlignment =
-                            Alignment.CenterVertically
-                    ) {
-
-                        Icon(
-                            imageVector =
-                                Icons.Default.PhotoCamera,
-                            contentDescription = null,
-                            tint =
-                                MaterialTheme.colorScheme
-                                    .primary,
-                            modifier =
-                                Modifier.size(16.dp)
-                        )
-
-                        Spacer(
-                            modifier =
-                                Modifier.width(6.dp)
-                        )
-
-                        Text(
-                            text = "GOLDEN HOUR",
-                            fontSize = 12.sp,
-                            fontWeight =
-                                FontWeight.Bold,
-                            color =
-                                MaterialTheme.colorScheme
-                                    .primary
-                        )
-                    }
-
-                    Spacer(
-                        modifier =
-                            Modifier.height(6.dp)
-                    )
-
+                Icon(Icons.Default.Place, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
                     Text(
-                        text =
-                            "Signal Hill Viewpoint",
-                        style =
-                            MaterialTheme.typography
-                                .titleMedium,
-                        fontWeight =
-                            FontWeight.Bold
+                        "View all saved locations",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
                     )
-
-                    Spacer(
-                        modifier =
-                            Modifier.height(4.dp)
-                    )
-
-                    // REAL-TIME GOLDEN HOUR
-                    Row(
-                        verticalAlignment =
-                            Alignment.CenterVertically
-                    ) {
-
-                        Icon(
-                            imageVector =
-                                Icons.Default.Schedule,
-                            contentDescription = null,
-                            modifier =
-                                Modifier.size(14.dp),
-                            tint =
-                                MaterialTheme.colorScheme
-                                    .onSurface
-                                    .copy(alpha = 0.6f)
-                        )
-
-                        Spacer(
-                            modifier =
-                                Modifier.width(4.dp)
-                        )
-
-                        Text(
-                            text =
-                                if (apiError) {
-                                    "Weather unavailable"
-                                } else {
-                                    goldenHourTime
-                                },
-                            fontSize = 12.sp,
-                            fontWeight =
-                                FontWeight.Medium,
-                            color =
-                                MaterialTheme.colorScheme
-                                    .onSurface
-                                    .copy(alpha = 0.6f)
-                        )
-
-                        Spacer(
-                            modifier =
-                                Modifier.width(12.dp)
-                        )
-
-                        Icon(
-                            imageVector =
-                                Icons.Default.Thermostat,
-                            contentDescription = null,
-                            modifier =
-                                Modifier.size(14.dp),
-                            tint =
-                                MaterialTheme.colorScheme
-                                    .onSurface
-                                    .copy(alpha = 0.6f)
-                        )
-
-                        Spacer(
-                            modifier =
-                                Modifier.width(4.dp)
-                        )
-
-                        Text(
-                            text =
-                                displayTemperature?.let {
-                                    "${"%.1f".format(it)}$temperatureUnit"
-                                } ?: "--$temperatureUnit",
-                            fontSize = 12.sp,
-                            color =
-                                MaterialTheme.colorScheme
-                                    .onSurface
-                                    .copy(alpha = 0.6f)
-                        )
-                    }
-                }
-
-                IconButton(
-                    onClick = {
-                        onNextShootClick()
-                    },
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(
-                            MaterialTheme.colorScheme
-                                .primary
-                                .copy(alpha = 0.2f)
-                        )
-                ) {
-
-                    Icon(
-                        imageVector =
-                            Icons.Default.ChevronRight,
-                        contentDescription =
-                            "Details",
-                        tint =
-                            MaterialTheme.colorScheme
-                                .primary
+                    Spacer(Modifier.height(5.dp))
+                    Text(
+                        if (savedScoutLocations.size == 1) "1 saved location"
+                        else "${savedScoutLocations.size} saved locations",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
                     )
                 }
+                Icon(Icons.Default.ChevronRight, contentDescription = "View all saved locations",
+                    tint = MaterialTheme.colorScheme.primary)
             }
         }
-
-        Spacer(
-            modifier = Modifier.height(20.dp)
-        )
+        Spacer(Modifier.height(20.dp))
 
         // -----------------------------------------------------
         // PHOTO SCORE + WEATHER
@@ -489,7 +391,7 @@ fun HomeScreen(
                 ) {
 
                     Text(
-                        text = "Photo Score",
+                        text = stringResource(R.string.ls_photo_score),
                         fontSize = 12.sp,
                         color =
                             MaterialTheme.colorScheme
@@ -548,7 +450,7 @@ fun HomeScreen(
                                     if (windSpeed != null) {
                                         "Live wind conditions"
                                     } else {
-                                        "Loading weather..."
+                                        stringResource(R.string.ls_loading_weather)
                                     },
                                 fontSize = 10.sp,
                                 color =
@@ -580,7 +482,7 @@ fun HomeScreen(
                 ) {
 
                     Text(
-                        text = "Weather",
+                        text = stringResource(R.string.ls_weather),
                         fontSize = 12.sp,
                         color =
                             MaterialTheme.colorScheme
@@ -656,7 +558,7 @@ fun HomeScreen(
         // -----------------------------------------------------
 
         Text(
-            text = "LIVE CONDITIONS",
+            text = stringResource(R.string.ls_live_conditions),
             style =
                 MaterialTheme.typography.labelMedium,
             fontWeight =
@@ -679,7 +581,7 @@ fun HomeScreen(
         ) {
 
             HomeWeatherCard(
-                title = "Cloud",
+                title = stringResource(R.string.ls_cloud),
                 value =
                     cloudCover?.let {
                         "${it.toInt()}%"
@@ -689,7 +591,7 @@ fun HomeScreen(
             )
 
             HomeWeatherCard(
-                title = "Rain",
+                title = stringResource(R.string.ls_rain),
                 value =
                     rainChance?.let {
                         "${it.toInt()}%"
@@ -699,7 +601,7 @@ fun HomeScreen(
             )
 
             HomeWeatherCard(
-                title = "Wind",
+                title = stringResource(R.string.ls_wind),
                 value =
                     windSpeed?.let {
                         "${it.toInt()} km/h"
@@ -718,7 +620,7 @@ fun HomeScreen(
         // -----------------------------------------------------
 
         Text(
-            text = "QUICK ACTIONS",
+            text = stringResource(R.string.ls_quick_actions),
             style =
                 MaterialTheme.typography.labelMedium,
             fontWeight =
@@ -741,7 +643,7 @@ fun HomeScreen(
         ) {
 
             QuickActionButton(
-                title = "Plan Shoot",
+                title = stringResource(R.string.ls_plan_shoot),
                 icon =
                     Icons.Default.CalendarMonth,
                 onClick = {
@@ -752,7 +654,7 @@ fun HomeScreen(
             )
 
             QuickActionButton(
-                title = "Scout",
+                title = stringResource(R.string.ls_scout),
                 icon = Icons.Default.Map,
                 onClick = {
                     onNavigate("scout")
@@ -762,7 +664,7 @@ fun HomeScreen(
             )
 
             QuickActionButton(
-                title = "Weather",
+                title = stringResource(R.string.ls_weather),
                 icon = Icons.Default.Cloud,
                 onClick = {
                     onNavigate("weather")
@@ -777,79 +679,90 @@ fun HomeScreen(
         )
 
         // -----------------------------------------------------
-        // SAVED LOCATIONS
+        // AI PHOTOGRAPHY ASSISTANT
         // -----------------------------------------------------
 
         Text(
-            text = "SAVED LOCATIONS",
-            style =
-                MaterialTheme.typography.labelMedium,
-            fontWeight =
-                FontWeight.Bold,
-            color =
-                MaterialTheme.colorScheme
-                    .onBackground
-                    .copy(alpha = 0.5f),
+            text = "LUMINASCOUT AI",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
             letterSpacing = 1.sp
         )
 
-        Spacer(
-            modifier = Modifier.height(8.dp)
-        )
+        Spacer(modifier = Modifier.height(12.dp))
 
-        val locations = listOf(
-
-            ScoutLocation(
-                id = "1",
-                name = "Signal Hill Viewpoint",
-                description =
-                    "Panoramas & Sunset Views",
-                photoScore = 94,
-                distance = "2.4 mi away",
-                goldenHourTime =
-                    goldenHourTime,
-                latitude = -33.9249,
-                longitude = 18.4241,
-                notes =
-                    "Panoramas and sunset views",
-                parkingDetails =
-                    "Street parking",
-                shootingAngle =
-                    "Wide angle toward the city"
-            ),
-
-            ScoutLocation(
-                id = "2",
-                name = "Kirstenbosch Canopy Walk",
-                description =
-                    "Forest & Mountain Backdrop",
-                photoScore = 86,
-                distance = "5.1 mi away",
-                goldenHourTime =
-                    goldenHourTime,
-                latitude = -33.9881,
-                longitude = 18.4324,
-                notes =
-                    "Forest and mountain backdrop",
-                parkingDetails =
-                    "Parking available",
-                shootingAngle =
-                    "Mountain-facing angle"
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface
             )
-        )
-
-        locations.forEach { location ->
-
-            SavedLocationCard(
-                location = location,
-                onClick = {
-                    onLocationClick(location)
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.AutoAwesome,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "AI Photography Assistant",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
-            )
 
-            Spacer(
-                modifier = Modifier.height(8.dp)
-            )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Smart shoot advice",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+
+                val advice = when {
+                    apiError || windSpeed == null || temperature == null ->
+                        "Weather data is unavailable. Open the Weather tab to check conditions before your shoot."
+                    windSpeed!! >= 30 ->
+                        "Strong wind (${windSpeed!!.toInt()} km/h). Consider a sheltered location and secure your equipment."
+                    rainChance != null && rainChance!! >= 60 ->
+                        "Rain is possible (${rainChance!!.toInt()}%). Plan an indoor backup and protect your camera."
+                    cloudCover != null && cloudCover!! >= 70 ->
+                        "Cloudy conditions (${cloudCover!!.toInt()}%) may provide soft, even portrait lighting."
+                    else ->
+                        "Conditions look promising. Check your shooting direction and exposure before starting."
+                }
+
+                Text(
+                    text = advice,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Golden hour estimate: $goldenHourTime",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = { onNavigate("ai_assistant") },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    Icon(Icons.Default.Chat, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Ask LuminaScout AI")
+                }
+            }
         }
 
         Spacer(
@@ -1020,7 +933,7 @@ fun SavedLocationCard(
                     imageVector =
                         Icons.Default.ChevronRight,
                     contentDescription =
-                        "View location",
+                        stringResource(R.string.ls_view_location),
                     tint =
                         MaterialTheme.colorScheme
                             .onSurface

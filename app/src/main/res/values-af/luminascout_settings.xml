@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ls_preferences">VOORKEURE</string>
+    <string name="ls_account">REKENING</string>
+    <string name="ls_language">Taal</string>
+    <string name="ls_choose_language">Kies \'n taal</string>
+    <string name="ls_cancel">Kanselleer</string>
+    <string name="ls_notifications">Kennisgewings</string>
+    <string name="ls_units">Eenhede</string>
+    <string name="ls_dark_mode">Donker modus</string>
+    <string name="ls_subscription">Intekening en fakturering</string>
+    <string name="ls_saved_locations">Gestoorde liggings</string>
+    <string name="ls_log_out">Meld af</string>
+    <string name="ls_edit_profile">Wysig profiel</string>
+    <string name="ls_billing_message">Maak fakturering oop</string>
+    <string name="ls_user_account">Gebruikersrekening</string>
+</resources>

@@ -2,7 +2,7 @@ name: Android Build and Test
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, final-poe-2026 ]
   pull_request:
     branches: [ main ]
 
@@ -35,6 +35,12 @@ jobs:
             exit 1
           fi
           printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+
+      - name: Run unit tests
+        run: ./gradlew test
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug   
 
       - name: Run unit tests
         run: ./gradlew test
